@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ============================================================================
+# bart — underachiever and proud of it
+#
+# Usage:
+#   bart                       # start in cwd
+#   bart ~/projects            # start in a workspace
+#   bart ~/projects/substance  # start in a specific project
+# ============================================================================
+
+BART_HOME="${BART_HOME:-$HOME/.config/bart}"
+
+# ── Parse args ───────────────────────────────────────────────────────────────
+if [[ $# -gt 0 ]]; then
+  WORKSPACE="$(cd "$1" && pwd)"
+else
+  WORKSPACE="$(pwd)"
+fi
+
+SESSION_NAME="bart-$(basename "$WORKSPACE")"
+AGENT_FILE="$BART_HOME/AGENT.md"
+
+# ── Ensure config ────────────────────────────────────────────────────────────
+if [[ ! -f "$AGENT_FILE" ]]; then
+  echo "Ay caramba! No AGENT.md at $AGENT_FILE"
+  echo ""
+  echo "Quick setup:"
+  echo "  mkdir -p $BART_HOME"
+  echo "  cp /path/to/AGENT.md $BART_HOME/AGENT.md"
+  exit 1
+fi
+
+# ── Attach if session exists ─────────────────────────────────────────────────
+if zellij list-sessions 2>/dev/null | grep -q "$SESSION_NAME"; then
+  exec zellij attach "$SESSION_NAME"
+fi
+
+# ── Write the yak aggregator ─────────────────────────────────────────────────
+mkdir -p "$BART_HOME/bin"
+cat > "$BART_HOME/bin/bart-yaks" <<SCRIPT
+#!/usr/bin/env bash
+for dir in "$WORKSPACE" "$WORKSPACE"/*/; do
+  [[ -d "\$dir/.git" ]] || continue
+  ( cd "\$dir" && yx ls 2>/dev/null | grep -q . ) || continue
+  printf "\\033[1m%s\\033[0m\\n" "\$(basename "\$dir")"
+  ( cd "\$dir" && yx ls 2>/dev/null )
+  echo ""
+done
+SCRIPT
+chmod +x "$BART_HOME/bin/bart-yaks"
+
+# ── Generate layout ──────────────────────────────────────────────────────────
+LAYOUT_FILE=$(mktemp /tmp/bart-layout-XXXX.kdl)
+cat > "$LAYOUT_FILE" <<KDL
+layout {
+    cwd "$WORKSPACE"
+    pane size=8 borderless=true command="watch" {
+        args "-n5" "-t" "$BART_HOME/bin/bart-yaks"
+    }
+    pane focus=true command="claude" {
+        args "--append-system-prompt-file" "$AGENT_FILE"
+    }
+}
+KDL
+
+# ── Launch ───────────────────────────────────────────────────────────────────
+echo "Eat my shorts — starting $SESSION_NAME"
+echo "Workspace: $WORKSPACE"
+exec zellij --session "$SESSION_NAME" --new-session-with-layout "$LAYOUT_FILE"
